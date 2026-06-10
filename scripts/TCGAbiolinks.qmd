@@ -1,0 +1,433 @@
+---
+title: "CompBio Hackathon 2026: exploring fusion genes in cancer"
+subtitle: "TCGAbiolinks & cbioportalR to access TCGA data"
+author: "Beto Bermudez & Robin Shaw"
+date-modified: last-modified
+date-format: "D MMM, YYYY"
+abstract: "Exploring fusion genes in TCGA. Here we pull public informatin from fusion genes and clinical data"
+title-block-banner: true
+
+execute:
+  echo: true
+  error: false
+  warning: false
+  cache: false
+
+format:
+  html: 
+    grid:
+      sidebar-width: 200px
+      body-width: 2000px
+      margin-width: 400px
+      gutter-width: 1.5rem
+    page-layout: full
+    toc: true
+    toc-depth: 2
+    toc-location: "left"
+    toc-title: "Contents"
+    cap-location: "bottom"
+    fig-cap-location: bottom
+    code-fold: true
+    code-overflow: "wrap"
+    code-copy: true
+    self-contained: true
+    embed-resources: true
+    number_sections: true
+
+editor: visual
+---
+
+# Introduction
+
+--Details of the project and any previous analysis--
+
+## Packages and R
+
+The analysis will be computed using the R Language [@rcoreteam2020] and using packages from CRAN and Bioconductor [@huber2015].
+
+```{r }
+#| label: libraries
+suppressMessages({
+  if(!require(tidyverse)) install.packages("tidyverse")
+  
+  if(!require(TCGAbiolinks)) install.packages("TCGAbiolinks")
+ 
+  if(!require(dplyr)) install.packages("dplyr")
+  if(!require(tidyr)) install.packages("tidyr")
+  
+  if(!require(gt)) install.packages("gt")
+  if(!require(Cairo)) install.packages("Cairo")
+})
+
+```
+
+```{r}
+#| label: main_parameters
+species <- "Human"
+annot_version <- 114
+```
+
+# Get annotation data
+
+The Ensembl Biomart database [@cunningham2022] is used to get annotation data.
+
+::: {.callout-note collapse="true"}
+For older reference versions of ensemble use `listEnsemblArchives()` to find the relevant mart.
+
+Get information on:
+
+-   ensembl_gene_id for matching
+-   mgi_symbol/external_gene_name for identifiable gene name
+-   description - Gene description
+-   chromosome_name - Chromosome/scaffold name
+-   start_position - Gene start (bp)
+-   end_position - Gene end (bp)
+-   entrezgene - NCBI gene
+:::
+
+```{r eval=FALSE}
+#| label: tbl-marts
+#| tbl-cap: "Available marts"
+# Get gene names from biomaRt
+# a random bug is arised from listMarts(), https://support.bioconductor.org/p/9154901/
+listMarts(host="http://www.ensembl.org") |> gt() |> opt_stylize(style = 6, color = 'gray') # http for HPC
+```
+
+```{r eval=FALSE}
+#| label: tbl-legacy
+#| tbl-cap: "Last 5 Archived References"
+head(listEnsemblArchives()) |> gt() |> opt_stylize(style = 6, color = 'gray') 
+```
+
+```{r get_annotation}
+#| label: tbl-get_annotation
+#| tbl-cap: "Table of Annotation (head of table)"
+#reference_dir <- "~/data/Y90/References_Index/references" # local
+reference_dir <- "~/shared_data/references_index" # for HPC
+biomart_version <- annot_version
+
+if (species == "Mouse" & biomart_version >= 103) {
+  biomart_version <- c(39, biomart_version)
+} else {
+  biomart_version <- c(38, biomart_version)
+}
+
+# Read gene annotation
+biomart_annotation_file <- ifelse(species == "Mouse",
+  file.path(reference_dir,"Mouse",paste0("version_",biomart_version[1],".",biomart_version[2]),paste0("biomaRt_Mouse_",biomart_version[1],"_", biomart_version[2],".rds")),
+  file.path(reference_dir,"Human",paste0("Homo_sapiens_",biomart_version[1],".",biomart_version[2]),paste0("biomaRt_Human_",biomart_version[1],"_", biomart_version[2],".rds")))
+if (!file.exists(biomart_annotation_file)) {
+  # Get gene names from biomaRt
+  biomaRt::listMarts(host="http://www.ensembl.org") # http for HPC
+  
+  #Get list of archived data
+  head(biomaRt::listEnsemblArchives())
+
+  attributes_ <- c('ensembl_gene_id','description','external_gene_name', "entrezgene_id", "gene_biotype",
+                  "chromosome_name", 'start_position', 'end_position')
+  biomart_host <- biomaRt::listEnsemblArchives()
+  ensembl <- biomaRt::useMart(biomart = 'ENSEMBL_MART_ENSEMBL', 
+                     dataset = ifelse(species == "Mouse", 'mmusculus_gene_ensembl', 'hsapiens_gene_ensembl'),
+                     host = biomart_host$url[match(biomart_version[2], biomart_host$version)]
+                    )
+  annot_raw <- biomaRt::getBM(
+      attributes = attributes_,
+      mart = ensembl)
+  saveRDS(annot_raw, file = biomart_annotation_file)
+} else {
+  annot_raw <- readRDS(biomart_annotation_file)
+  annot_raw$description = sub(" \\[Source.*\\]$", "", annot_raw$description)
+}
+
+# no duplication?
+# stopifnot(any(duplicated(annot_raw$ensembl_gene_id)) == FALSE)
+# table(duplicated(annot_raw$ensembl_gene_id))
+# There are duplication due to multiple entrezgene_id
+
+# Save the complete annotation data
+#data.table::fwrite(annot_raw, paste0(exper_id, "_annotation.tsv"), sep = "\t")
+
+# Only keep unique values
+annot <- annot_raw[!duplicated(annot_raw$ensembl_gene_id),]
+tail(annot) |> gt() |> opt_stylize(style = 6, color = 'gray') 
+```
+
+# TCGA-LUAD Sequencing Datas
+
+Genomic bam for 00d461ae-a1d8-42f2-abd8-5e159363d857 is 11 Gb
+
+transcriptome bam for 00d461ae-a1d8-42f2-abd8-5e159363d857 is \~6.5 Gb
+
+chimeric reads fam for 00d461ae-a1d8-42f2-abd8-5e159363d857 is \~60 Mb.
+
+```{r}
+df <- read.table("~/long-term-scratch/bbermude/data/OMICS/Y90_2409_JRBB_Test/Information/gdc_manifest.txt", header = T)
+
+head(df %>% arrange(filename), n = 10) |> gt() |> opt_stylize(style = 6, color = 'gray') 
+```
+
+```{r}
+df$type <- sub("^[^.]*\\.", "", df$filename)
+
+
+df$type <- ifelse(df$type == "bam", yes = sub("^[^_]*_", "", df$filename), no = df$type)
+
+df$type <- sub(".bam$", "", df$type)
+
+df$type <- sub("gdc_realn$", "", df$type)
+
+df$type <- sub("\\.$", "", df$type)
+df$type <- sub("_$", "", df$type)
+```
+
+I think that:
+
+-   wxs: whole exome sequencing
+-   WholeGenome.RP-1657: ???
+-   wgs: whole genome sequencing
+-   rna_seq.chimeric: ???
+-   rna_seq.genomic: ???
+-   rna_seq.transcriptome: bulk RNA-seq
+-   mirna: small RNAs sequencing.
+-   atacseq: Assay for Transposase-Accessible Chromatin using sequencing.
+
+Interestingly the number of rna_seq.chimeric, rna_seq.genomic and rna_seq.transcriptome matches perfectly.
+
+```{r}
+sort(table(df$type), decreasing = T)
+```
+
+```{r}
+barplot(sort(table(df$type), decreasing = T), las=2, main="most abundant data types for LUAD")
+```
+
+The biggest files are wgs and WholeGenome.RP-1657
+
+```{r}
+l <- split(df$size, df$type)
+boxplot(l, main="file size by type", las=2)
+```
+
+We won't be working with WGS data during the hackathon, drop these entries from the table.
+
+```{r }
+df <- df %>% filter(type != "wgs") %>% filter(type != "WholeGenome.RP-1657")
+```
+
+```{r}
+l <- split(df$size, df$type)
+boxplot(l, main="file size by type", las=2)
+```
+
+```{r}
+df_tcgabiolinks <- df
+```
+
+```{r}
+print("time taken to pull clinical data from a single TCGA project")
+print(system.time({
+  clinical_luad <- GDCquery_clinic(project = "TCGA-LUAD", type = "clinical")
+    
+  clinical_hnsc <- GDCquery_clinic(project = "TCGA-HNSC", type = "clinical")
+}))
+```
+
+This means that I can't simply merge the tables with rbind
+
+```{r}
+table(colnames(clinical_hnsc) %in% colnames(clinical_luad))
+```
+
+# cbioportalR
+
+```{r }
+library(cbioportalR)
+
+set_cbioportal_db("public")
+
+studies <- available_studies()
+
+dim(studies)
+```
+
+```{r}
+studies %>%  as.data.frame() |> gt() |> opt_stylize(style = 6, color = 'gray') 
+```
+
+There are 31 studies.
+
+```{r}
+table(grepl("_tcga_pan_can_atlas_2018", studies$studyId))
+```
+
+```{r }
+studies_tcga <- studies$studyId[grepl("_tcga_pan_can_atlas_2018", studies$studyId)]
+
+studies_tcga
+```
+
+## get_fusions_by_study: LUAD
+
+```{r }
+print("time taken to get fusions from a single study")
+print(system.time({
+  luad <- get_fusions_by_study(study_id = "luad_tcga_pan_can_atlas_2018")
+}))
+```
+
+This is the type of information that we have access using the cbioportalR::get_fusions_by_study function.
+
+```{r }
+luad %>% head() %>%  as.data.frame() |> gt() |> opt_stylize(style = 6, color = 'gray') 
+```
+
+split fusions by patient
+
+```{r }
+l_patient <- split(luad$sampleId, luad$patientId)
+```
+
+Patient `r names(head(sort(sapply(l_patient, length), decreasing = T), n=1))` has the most samples with `r unname(head(sort(sapply(l_patient, length), decreasing = T), n=1))`
+
+```{r }
+head(sort(sapply(l_patient, length), decreasing = T))
+```
+
+```{r cache=TRUE}
+#| label: gather_fusion_data
+
+l_all <- list()
+
+n <- 1
+n_files <- length(studies_tcga)
+
+print("total time needed to gather all TCGA fusion information")
+print(system.time({
+  for(study in studies_tcga){
+  
+  print_progress <- paste(date(), "working on:", study, paste(n, n_files, sep = "/"), sep = " ")
+  print(print_progress)
+  print(system.time({
+    l_all[[study]] <- get_fusions_by_study(study_id = study)
+  }))
+  n <- n + 1
+
+}
+}))
+
+# merge into a single data frame
+df_all <- do.call(rbind, l_all)
+```
+
+```{r }
+# out_file <- "~/long-term-scratch/bbermude/data/OMICS/Y90_2409_JRBB_Test/Data/TCGA/cbioportalR_fusions.RDS"
+# saveRDS(object = l_all, file = out_file)
+
+out_file <- "~/long-term-scratch/bbermude/data/OMICS/Y90_2409_JRBB_Test/Data/TCGA/cbioportalR_TCGA_fusions.csv"
+write.csv(x = df_all, file = out_file, row.names = F)
+```
+
+```{r}
+df <- df_all
+```
+
+Gathering all clinical data for all TCGA projects for which we have fusion genes data
+
+```{r}
+tcga_ids <- paste("TCGA", stringr::str_to_upper(sub("_.+", "", studies_tcga)), sep = "-")
+
+# manual curation of some entries
+tcga_ids[tcga_ids == "TCGA-COADREAD"] <- "TCGA-COAD"
+tcga_ids <- c(tcga_ids, "TCGA-READ")
+
+
+```
+
+```{r }
+#| label: gather_clinical_data
+
+out_dir <- "~/long-term-scratch/bbermude/data/OMICS/Y90_2409_JRBB_Test/Data/TCGA/clinical"
+dir.create(out_dir, showWarnings = F, recursive = T)
+setwd(out_dir)
+
+l_clinic <- list()
+
+n <- 1
+n_files <- length(tcga_ids)
+
+print("total time spent getting clinical information")
+print(system.time({
+  for(tcga_id in tcga_ids){
+      print_progress <- paste(date(), "working on:", tcga_id, paste(n, n_files, sep = "/"), sep = " ")
+      print(print_progress)
+      print(system.time({
+        l_clinic[[tcga_id]] <- GDCquery_clinic(project = tcga_id, type = "clinical", save.csv = T)
+      }))
+      n <- n + 1
+  }
+}))
+```
+
+```{r}
+hist(sapply(l_clinic, ncol))
+```
+
+```{r}
+sort(sapply(l_clinic, ncol))
+```
+
+```{r}
+common_cols <- Reduce(
+  intersect,
+  lapply(l_clinic, colnames)
+)
+
+common_cols
+```
+
+Merge all clinic information with shared columns
+
+```{r}
+df_clinic <- do.call(rbind, lapply(l_clinic, function(x) x[,common_cols]))
+
+out_file <- "~/long-term-scratch/bbermude/data/OMICS/Y90_2409_JRBB_Test/Data/TCGA/clinical/clinical_shared_columns.csv"
+write.csv(x = df_clinic, file = out_file, row.names = F)
+```
+
+```{r}
+hist(df_clinic$age_at_index, main = "Age at index distribution", xlab = "Age at index")
+```
+
+# Memory usage
+
+This is the total memory used summing all object sizes at the end of the markdown. This doesn't includes those objects that may have been deleted in different chunks of the code.
+
+::: {.callout-note collapse="true"}
+```{r}
+#| label: mem-usage
+# Function to convert bytes to human-readable format
+human_readable <- function(bytes) {
+  units <- c("B", "KB", "MB", "GB", "TB")
+  if (bytes == 0) return("0 B")
+  i <- floor(log(bytes, 1024))
+  size <- bytes / (1024^i)
+  sprintf("%.2f %s", size, units[i + 1])
+}
+
+# Get total size of all objects in the global environment
+total_size <- sum(sapply(ls(envir = .GlobalEnv), function(x) object.size(get(x, envir = .GlobalEnv))))
+
+# Print in human-readable format
+cat("Total memory used:", human_readable(total_size), "\n")
+
+```
+:::
+
+# Session Info
+
+::: {.callout-note collapse="true"}
+```{r}
+#| label: Session-Info
+sessioninfo::session_info()
+```
+:::

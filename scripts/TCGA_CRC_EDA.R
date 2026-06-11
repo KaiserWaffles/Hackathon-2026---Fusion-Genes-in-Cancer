@@ -123,7 +123,7 @@ response_table <- master %>%
   distinct(submitter_id, .keep_all = TRUE) %>%
   filter(!is.na(follow_ups_disease_response)) %>%
   filter(! follow_ups_disease_response=="Unknown")%>%
-  select(
+  dplyr:: select(
     submitter_id,
     follow_ups_disease_response,
     nfusion_per_patient
@@ -177,7 +177,3 @@ response_table %>%
     min=min(nfusion_per_patient),
     max=max(nfusion_per_patient)
   )
-# Do higher number of fusions lead to poorer prognosis?----
-
-
-

@@ -1,0 +1,9 @@
+dataset,condition,n_replicates,unique_fusions,in_all_replicates,in_one_replicate_only
+human_antiEGFR,KRAS_organoids_antiEGFR,3,38,10,23
+human_antiEGFR,KRAS_organoids_ctrl,3,52,10,35
+human_bile,CA,3,30,9,16
+human_bile,GCA,3,62,9,47
+human_bile,TCA,3,33,7,20
+human_bile,ctrl,3,44,5,31
+mouse_ifn,IFN,3,242,68,131
+mouse_ifn,ctrl,3,269,69,153

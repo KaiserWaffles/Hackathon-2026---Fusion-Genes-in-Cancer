@@ -1,6 +1,7 @@
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
+library(ggpubr)
 
 # Set working directory
 setwd("D:/gene_fusion")
@@ -83,9 +84,8 @@ age_table <- master %>%
     age_at_index,
     age_at_diagnosis,
     nfusion_per_patient
-  ) %>%
-  distinct(submitter_id, .keep_all = TRUE) %>%  # one row per patient
-  filter(!is.na(age_at_index))                  # remove missing ages
+  ) %>% distinct(submitter_id, .keep_all = TRUE) %>%  
+  filter(!is.na(age_at_index))                
 
 # Create 10-year age bands
 age_breaks <- seq(
@@ -105,42 +105,14 @@ age_table <- age_table %>%
   )
 
 
-# Add total fusion per age and mean fusion per age
 
-age_table <- age_table %>%
-  group_by(age_band) %>%
-  mutate(
-    nPatient_per_age_group = n_distinct(submitter_id),
-    total_fusions = sum(nfusion_per_patient),
-    mean_fusions_per_patient = total_fusions / nPatient_per_age_group
-  ) %>%
-  ungroup()
-age_bar_plot<-ggplot(age_table,
-                     aes(x=age_band,
-                         y=mean_fusions_per_patient))+geom_col()+
-  theme_classic()+ labs(
-    x = "Age Group",
-    y = "mean Fusion per Age Group"
-  )
-
-
-
-# Add scatter plot to see if there is a patttern
-age_scater_plot<-ggplot(age_table,
-                     aes(x=age_at_index,
-                         y=nfusion_per_patient))+geom_point()+
-  geom_smooth(method = lm,color="red", se=T)+
-  theme_classic()+ labs(
-    x = "Age",
-    y = "Sum of Fusion per Patient"
-  )
-
-age_scater_plot
-
-ggsave("age_bar_plot.png",age_scater_plot, dpi=300,
-       width = 6,
-       height = 4)
-
+#= Boxplot====
+ggplot(age_table,
+       aes(age_band,
+           nfusion_per_patient))+
+  geom_violin(trim=FALSE)+
+  geom_boxplot()+
+  theme_classic()
 
 #==========================
 # Prognosis and Fusion per age box plot
@@ -156,29 +128,56 @@ response_table <- master %>%
     follow_ups_disease_response,
     nfusion_per_patient
   )
+response_table$clean_response_cat <- ifelse(
+response_table$follow_ups_disease_response== "TF-Tumor Free","Responders","Non-Responders")
 
-
-unique(response_table$follow_ups_disease_response)
-# Boxplot + individual patient points
-ggplot(response_table,
-       aes(x = follow_ups_disease_response,
-           y = nfusion_per_patient),
-       box.colour = c("pink","purple")) +
-  geom_boxplot(outlier.shape = NA) +
+# Boxplot + individual patient points-----
+p<-ggplot(response_table,
+       aes(x = clean_response_cat,
+           y = nfusion_per_patient)) +
+  geom_boxplot(outlier.shape = NA,,color = c("red","blue")) +
   geom_jitter(width = 0.15, alpha = 0.7, size = 2) +
-  theme_classic() +
+
+  theme_classic(base_size = 13, base_family = "Arial") +
   labs(
-    x = "Disease response group",
+    x = NULL,
     y = "Number of fusions per patient",
-    title = "Fusion burden by disease response"
+    title = NULL
   ) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 0),
+    legend.position = "none"
+  )
+
+
+my_comparisons<- c("Responders","Non-Responders")
+p.response<-p+stat_compare_means(
+  comparisons = my_comparisons,
+  method = "wilcox.test",
+  label = "p.format"
+)+  stat_compare_means(label.y = 13)    
+
+ggsave("plot/response.boxplot.png",
+       p.response,
+       dpi=300,
+       width = 6,
+       height = 5)
 
 
 
-print("Is higher number of fusion correlated to poor response")
-
-
-
-
+#stats----
+response_table %>%
+  group_by(clean_response_cat) %>%
+  summarise(
+    n=n(),
+    mean=mean(nfusion_per_patient),
+    median=median(nfusion_per_patient),
+    sd=sd(nfusion_per_patient),
+    min=min(nfusion_per_patient),
+    max=max(nfusion_per_patient)
+  )
 # Do higher number of fusions lead to poorer prognosis?----
+
+
+

@@ -14,11 +14,9 @@ Exploring the molacular function of the genes involved in fusion using Sun, Qian
 
 ## Shared Fusions Between Long Reads and Short Reads
 Investigating common fusions between Long reads obtained from  [Sun, Qiang et al.(2023)] (doi:10.1186/s13073-023-01226-y) and three paired end bulk RNA seq reads that were processed through Arriba to find the fusion events. These three datasets are:
-| Dataset                              | Citation                                     |
-| ------------------------------------ | -------------------------------------------- |
-| PRJNA1269539_arriba_human_bile_salts | **Lässle et al., 2025**                      |
-| PRJNA1062304_arriba_mouse_ifn        | **Jing et al., 2024**                        |
-| PRJNA1462607_arriba_human_antiEGFR   | **Unpublished dataset (PRJNA1462607, 2026)** |
+**Lässle et al., 2025**                      
+**Jing et al., 2024**                        
+**Unpublished dataset (PRJNA1462607, 2026)** 
 **Code** [Compare_fusions.R](https://github.com/KaiserWaffles/Hackathon-2026---Fusion-Genes-in-Cancer/blob/main/scripts/compare_fusions.R)- Anya
 
 
